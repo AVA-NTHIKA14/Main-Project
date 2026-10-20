@@ -13,3 +13,7 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+
+# IDE and Kotlin build metadata
+*.iml
+/android/.kotlin/

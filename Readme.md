@@ -68,6 +68,3 @@ Road Repair
 Citizen Confirmation
        ↓
 Hazard Removed from Map
-
-#Contributors
-Afthab Muhammed

@@ -82,6 +82,8 @@ class MockDetectionModel implements DetectionModel {
 }
 
 class DetectionService {
+  // Keep the public named parameter while storing the dependency privately.
+  // ignore: prefer_initializing_formals
   DetectionService({required DetectionModel model}) : _model = model;
 
   final DetectionModel _model;

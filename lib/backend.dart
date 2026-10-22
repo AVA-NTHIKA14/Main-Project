@@ -447,6 +447,8 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
   final Map<String, Map<String, Map<String, Object?>>> _collections = {};
   RoadSenseUser? _currentUser;
 
+  RoadSenseUser? get currentUser => _currentUser;
+
   @override
   Future<RoadSenseUser> signIn({
     required String email,
@@ -455,11 +457,12 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
     _requireNetwork();
     final document =
         _collections[BackendCollections.users]?[email.trim().toLowerCase()];
-    if (document == null)
+    if (document == null) {
       throw const BackendException(
         BackendFailure.authentication,
         'Account not found.',
       );
+    }
     return _userFrom(document)!;
   }
 
@@ -552,11 +555,12 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
   }
 
   void _requireNetwork() {
-    if (!networkAvailable)
+    if (!networkAvailable) {
       throw const BackendException(
         BackendFailure.network,
         'Backend network is unavailable.',
       );
+    }
   }
 }
 
@@ -584,7 +588,7 @@ RoadSenseUser? _userFrom(Map<String, Object?>? data) {
     id: (data['id'] ?? data['email'])! as String,
     name: data['name']! as String,
     email: data['email']! as String,
-    role: UserRole.values.byName((data['role'] ?? 'user')! as String),
+    role: UserRole.values.byName((data['role'] ?? 'user') as String),
     isEmailVerified: data['isEmailVerified'] as bool? ?? false,
   );
 }

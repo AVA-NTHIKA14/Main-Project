@@ -186,15 +186,17 @@ class _TripsScreenState extends State<TripsScreen> {
           child: FutureBuilder<List<Trip>>(
             future: _trips,
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting)
+              if (snapshot.connectionState == ConnectionState.waiting) {
                 return const RoadSenseLoadingState(label: 'Loading trips');
+              }
               final trips = snapshot.data ?? const <Trip>[];
-              if (trips.isEmpty)
+              if (trips.isEmpty) {
                 return const RoadSenseEmptyState(
                   title: 'No trips yet',
                   message: 'Trips are created automatically as you travel.',
                   icon: Icons.route_outlined,
                 );
+              }
               return ListView.separated(
                 itemCount: trips.length,
                 separatorBuilder: (_, index) => const Divider(height: 1),

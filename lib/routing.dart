@@ -63,10 +63,13 @@ class MockRoutingService implements RoutingService {
 }
 
 class HazardAwareRoutingService {
+  // Keep the public named parameter while storing the dependency privately.
   const HazardAwareRoutingService({
     required RoutingService routingService,
     this.minimumConfidence = .8,
-  }) : _routingService = routingService;
+  })
+  // ignore: prefer_initializing_formals
+  : _routingService = routingService;
 
   final RoutingService _routingService;
   final double minimumConfidence;

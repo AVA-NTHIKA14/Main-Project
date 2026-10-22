@@ -154,8 +154,11 @@ class MockSyncBackend implements SyncBackend {
 }
 
 class SyncService extends ChangeNotifier implements SensorReadingSink {
+  // Keep the public named parameters while storing dependencies privately.
   SyncService({required PendingSyncStore store, required SyncBackend backend})
+    // ignore: prefer_initializing_formals
     : _store = store,
+      // ignore: prefer_initializing_formals
       _backend = backend;
 
   final PendingSyncStore _store;
@@ -172,7 +175,9 @@ class SyncService extends ChangeNotifier implements SensorReadingSink {
 
   Future<void> initialize() async {
     if (_loaded) return;
-    for (final item in await _store.load()) _items[item.id] = item;
+    for (final item in await _store.load()) {
+      _items[item.id] = item;
+    }
     _loaded = true;
     _updateState();
   }
@@ -205,7 +210,9 @@ class SyncService extends ChangeNotifier implements SensorReadingSink {
     }
     _uploading = true;
     _state = SyncState.uploading;
-    for (final item in pending) item.state = SyncState.uploading;
+    for (final item in pending) {
+      item.state = SyncState.uploading;
+    }
     notifyListeners();
     try {
       final acknowledged = await _backend.upload(pending);

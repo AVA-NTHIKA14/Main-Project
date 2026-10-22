@@ -70,4 +70,4 @@ Citizen Confirmation
 Hazard Removed from Map
 
 #Contributors
-Afthab
+Afthab Muhammed

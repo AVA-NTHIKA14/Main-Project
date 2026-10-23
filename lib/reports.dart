@@ -239,12 +239,18 @@ class _ManualReportFlowState extends State<ManualReportFlow> {
         style: Theme.of(context).textTheme.bodyMedium,
       ),
       const SizedBox(height: RoadSenseSpacing.md),
-      ...ReportCategory.values.map(
-        (category) => RadioListTile<ReportCategory>(
-          value: category,
-          groupValue: _category,
-          onChanged: (value) => setState(() => _category = value),
-          title: Text(category.label),
+      RadioGroup<ReportCategory>(
+        groupValue: _category,
+        onChanged: (value) => setState(() => _category = value),
+        child: Column(
+          children: ReportCategory.values
+              .map(
+                (category) => RadioListTile<ReportCategory>(
+                  value: category,
+                  title: Text(category.label),
+                ),
+              )
+              .toList(),
         ),
       ),
     ],
@@ -301,17 +307,24 @@ class _ManualReportFlowState extends State<ManualReportFlow> {
         style: Theme.of(context).textTheme.bodyMedium,
       ),
       const SizedBox(height: RoadSenseSpacing.md),
-      ...[
-        HazardSeverity.possible,
-        HazardSeverity.moderate,
-        HazardSeverity.high,
-      ].map(
-        (severity) => RadioListTile<HazardSeverity>(
-          value: severity,
-          groupValue: _severity,
-          onChanged: (value) =>
-              setState(() => _severity = value ?? HazardSeverity.moderate),
-          title: Text(_severityLabel(severity)),
+      RadioGroup<HazardSeverity>(
+        groupValue: _severity,
+        onChanged: (value) => setState(
+          () => _severity = value ?? HazardSeverity.moderate,
+        ),
+        child: Column(
+          children: [
+            HazardSeverity.possible,
+            HazardSeverity.moderate,
+            HazardSeverity.high,
+          ]
+              .map(
+                (severity) => RadioListTile<HazardSeverity>(
+                  value: severity,
+                  title: Text(_severityLabel(severity)),
+                ),
+              )
+              .toList(),
         ),
       ),
     ],

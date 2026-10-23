@@ -1,7 +1,9 @@
+
 import 'package:flutter/material.dart';
 
 import 'auth.dart';
 import 'auth_screens.dart';
+import 'admin.dart';
 import 'design_system.dart';
 import 'onboarding.dart';
 import 'navigation_services.dart';
@@ -30,12 +32,17 @@ class RoadSenseApp extends StatefulWidget {
 
 class _RoadSenseAppState extends State<RoadSenseApp> {
   late final AuthController _authController;
+  late final AuthenticationService _authenticationService;
 
   @override
   void initState() {
     super.initState();
+
+    _authenticationService =
+        widget.authenticationService ?? MockAuthenticationService();
+
     _authController = AuthController(
-      service: widget.authenticationService ?? MockAuthenticationService(),
+      service: _authenticationService,
     );
   }
 
@@ -55,7 +62,9 @@ class _RoadSenseAppState extends State<RoadSenseApp> {
         homeBuilder: () => OnboardingGate(
           permissionService:
               widget.permissionService ?? MockPermissionService(),
-          homeBuilder: () => const RoadSenseShell(),
+          homeBuilder: () => RoadSenseShell(
+            authenticationService: _authenticationService,
+          ),
         ),
       ),
     );
@@ -63,7 +72,12 @@ class _RoadSenseAppState extends State<RoadSenseApp> {
 }
 
 class RoadSenseShell extends StatefulWidget {
-  const RoadSenseShell({super.key});
+  const RoadSenseShell({
+    super.key,
+    required this.authenticationService,
+  });
+
+  final AuthenticationService authenticationService;
 
   @override
   State<RoadSenseShell> createState() => _RoadSenseShellState();
@@ -71,6 +85,7 @@ class RoadSenseShell extends StatefulWidget {
 
 class _RoadSenseShellState extends State<RoadSenseShell> {
   int _selectedIndex = 0;
+
   late final NominatimPlaceSearchService _placeSearchService;
   late final OsrmRouteCalculationService _routeCalculationService;
   late final List<Widget> _pages;
@@ -78,8 +93,10 @@ class _RoadSenseShellState extends State<RoadSenseShell> {
   @override
   void initState() {
     super.initState();
+
     _placeSearchService = NominatimPlaceSearchService();
     _routeCalculationService = OsrmRouteCalculationService();
+
     _pages = [
       RoutePlanningScreen(
         placeSearchService: _placeSearchService,
@@ -99,16 +116,96 @@ class _RoadSenseShellState extends State<RoadSenseShell> {
     super.dispose();
   }
 
+  void _showAdminOptions() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'RoadSense Admin',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Choose an option to access the operations workspace.',
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.dashboard_outlined),
+                label: const Text('Preview Admin Dashboard'),
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => AdminDashboard(
+                        user: const RoadSenseUser(
+                          id: 'demo-admin',
+                          name: 'Demo Administrator',
+                          email: 'admin@roadsense.demo',
+                          role: UserRole.administrator,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.login),
+                label: const Text('Admin Login'),
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => AdminLoginScreen(
+                        authenticationService:
+                            widget.authenticationService,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Dashboard preview uses sample data. '
+                'It does not provide production-secure admin access.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: IndexedStack(index: _selectedIndex, children: _pages),
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: _pages,
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.small(
+        tooltip: 'Admin access',
+        onPressed: _showAdminOptions,
+        child: const Icon(Icons.admin_panel_settings_outlined),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
+        onDestinationSelected: (index) {
+          setState(() => _selectedIndex = index);
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.route_outlined),
@@ -141,17 +238,17 @@ class _SavedPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Saved places')),
-    body: const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Text(
-          'Your saved places and preferred routes will appear here.',
-          textAlign: TextAlign.center,
+        appBar: AppBar(title: const Text('Saved places')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Your saved places and preferred routes will appear here.',
+              textAlign: TextAlign.center,
+            ),
+          ),
         ),
-      ),
-    ),
-  );
+      );
 }
 
 class _TripsPage extends StatelessWidget {

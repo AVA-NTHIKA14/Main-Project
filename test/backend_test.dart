@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:road_loop/auth.dart';
 import 'package:road_loop/backend.dart';
 import 'package:road_loop/detection.dart';
 import 'package:road_loop/explore.dart';

@@ -182,7 +182,7 @@ class _AdminSensorDataScreenState extends State<AdminSensorDataScreen> {
             width: 230,
             child: DropdownButtonFormField<String?>(
               isExpanded: true,
-              value: _tripId,
+              initialValue: _tripId,
               decoration: const InputDecoration(labelText: 'Trip selection'),
               items: [
                 const DropdownMenuItem<String?>(
@@ -200,7 +200,7 @@ class _AdminSensorDataScreenState extends State<AdminSensorDataScreen> {
             width: 210,
             child: DropdownButtonFormField<SensorChannel>(
               isExpanded: true,
-              value: _channel,
+              initialValue: _channel,
               decoration: const InputDecoration(labelText: 'Sensor selection'),
               items: SensorChannel.values
                   .map(
@@ -423,12 +423,13 @@ class _SignalPainter extends CustomPainter {
     final grid = Paint()
       ..color = RoadSenseColors.line
       ..strokeWidth = 1;
-    for (var index = 1; index < 5; index++)
+    for (var index = 1; index < 5; index++) {
       canvas.drawLine(
         Offset(0, size.height * index / 5),
         Offset(size.width, size.height * index / 5),
         grid,
       );
+    }
     if (records.length < 2) return;
     final paths = [Path(), Path(), Path()];
     for (var index = 0; index < records.length; index++) {
@@ -437,10 +438,11 @@ class _SignalPainter extends CustomPainter {
       for (var axis = 0; axis < 3; axis++) {
         final normalized = ((values[axis] / (processed ? 12 : 15)) + 1) / 2;
         final point = Offset(x, size.height * (1 - normalized.clamp(0, 1)));
-        if (index == 0)
+        if (index == 0) {
           paths[axis].moveTo(point.dx, point.dy);
-        else
+        } else {
           paths[axis].lineTo(point.dx, point.dy);
+        }
       }
     }
     final colors = [
@@ -448,7 +450,7 @@ class _SignalPainter extends CustomPainter {
       RoadSenseColors.amber,
       RoadSenseColors.red,
     ];
-    for (var index = 0; index < paths.length; index++)
+    for (var index = 0; index < paths.length; index++) {
       canvas.drawPath(
         paths[index],
         Paint()
@@ -456,6 +458,7 @@ class _SignalPainter extends CustomPainter {
           ..strokeWidth = 2
           ..style = PaintingStyle.stroke,
       );
+    }
   }
 
   List<double> _values(AdminSensorRecord record) => switch (channel) {

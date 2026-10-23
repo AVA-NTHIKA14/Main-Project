@@ -188,7 +188,7 @@ class _AdminHazardsScreenState extends State<AdminHazardsScreen> {
             width: 150,
             child: DropdownButtonFormField<String>(
               isExpanded: true,
-              value: _dateFilter,
+              initialValue: _dateFilter,
               decoration: const InputDecoration(labelText: 'Date'),
               items: const [
                 DropdownMenuItem(value: 'All dates', child: Text('All dates')),
@@ -213,7 +213,7 @@ class _AdminHazardsScreenState extends State<AdminHazardsScreen> {
     width: 170,
     child: DropdownButtonFormField<T>(
       isExpanded: true,
-      value: value,
+      initialValue: value,
       decoration: InputDecoration(labelText: label),
       items: [
         DropdownMenuItem<T>(

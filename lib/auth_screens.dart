@@ -20,15 +20,38 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   AuthPage _page = AuthPage.splash;
   bool _guestMode = false;
+  AuthStatus? _previousStatus;
 
   @override
   void initState() {
     super.initState();
+    _previousStatus = widget.controller.status;
+    widget.controller.addListener(_onAuthControllerChanged);
     Future<void>.delayed(const Duration(milliseconds: 700), () {
       if (mounted && !widget.controller.isSignedIn) {
         setState(() => _page = AuthPage.welcome);
       }
     });
+  }
+
+  void _onAuthControllerChanged() {
+    final currentStatus = widget.controller.status;
+    if (_previousStatus == AuthStatus.signedIn &&
+        currentStatus == AuthStatus.signedOut) {
+      if (mounted) {
+        setState(() {
+          _guestMode = false;
+          _page = AuthPage.welcome;
+        });
+      }
+    }
+    _previousStatus = currentStatus;
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onAuthControllerChanged);
+    super.dispose();
   }
 
   void _show(AuthPage page) {

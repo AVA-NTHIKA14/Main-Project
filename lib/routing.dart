@@ -68,8 +68,8 @@ class HazardAwareRoutingService {
     required RoutingService routingService,
     this.minimumConfidence = .8,
   })
-  // ignore: prefer_initializing_formals
-  : _routingService = routingService;
+    // ignore: prefer_initializing_formals
+    : _routingService = routingService;
 
   final RoutingService _routingService;
   final double minimumConfidence;

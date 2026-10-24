@@ -55,12 +55,7 @@ void main() {
             timestamp: timestamp,
           ),
         ],
-        gpsFix: GpsFix(
-          lat: 1,
-          lng: 2,
-          speed: 3,
-          timestamp: timestamp,
-        ),
+        gpsFix: GpsFix(lat: 1, lng: 2, speed: 3, timestamp: timestamp),
         windowStart: timestamp,
         windowEnd: timestamp.add(const Duration(seconds: 1)),
       );

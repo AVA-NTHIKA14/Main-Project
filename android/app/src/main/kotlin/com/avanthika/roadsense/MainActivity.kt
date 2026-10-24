@@ -1,4 +1,4 @@
-package com.example.roadsense
+package com.avanthika.roadsense
 
 import io.flutter.embedding.android.FlutterActivity
 

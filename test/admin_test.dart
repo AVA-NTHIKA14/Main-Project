@@ -112,6 +112,10 @@ class _FakeAuthenticationService implements AuthenticationService {
   const _FakeAuthenticationService(this.user);
   final RoadSenseUser user;
   @override
+  Stream<RoadSenseUser?> get authStateChanges => Stream.value(user);
+  @override
+  RoadSenseUser? get currentUser => user;
+  @override
   Future<RoadSenseUser> signIn({
     required String email,
     required String password,

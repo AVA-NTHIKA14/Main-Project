@@ -30,34 +30,34 @@ class HazardEvent {
   final HazardStatus status;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'lat': lat,
-        'lng': lng,
-        'geohash': geohash,
-        'type': type.name,
-        'confidence': confidence,
-        'severity': severity?.name,
-        'reportedBy': reportedBy,
-        'timestamp': timestamp.toIso8601String(),
-        'verificationCount': verificationCount,
-        'status': status.name,
-      };
+    'id': id,
+    'lat': lat,
+    'lng': lng,
+    'geohash': geohash,
+    'type': type.name,
+    'confidence': confidence,
+    'severity': severity?.name,
+    'reportedBy': reportedBy,
+    'timestamp': timestamp.toIso8601String(),
+    'verificationCount': verificationCount,
+    'status': status.name,
+  };
 
   factory HazardEvent.fromJson(Map<String, dynamic> json) => HazardEvent(
-        id: json['id'] as String,
-        lat: (json['lat'] as num).toDouble(),
-        lng: (json['lng'] as num).toDouble(),
-        geohash: json['geohash'] as String,
-        type: HazardType.values.byName(json['type'] as String),
-        confidence: (json['confidence'] as num?)?.toDouble(),
-        severity: json['severity'] == null
-            ? null
-            : SeverityLevel.values.byName(json['severity'] as String),
-        reportedBy: json['reportedBy'] as String,
-        timestamp: DateTime.parse(json['timestamp'] as String),
-        verificationCount: (json['verificationCount'] as num?)?.toInt() ?? 0,
-        status: json['status'] == null
-            ? HazardStatus.unverified
-            : HazardStatus.values.byName(json['status'] as String),
-      );
+    id: json['id'] as String,
+    lat: (json['lat'] as num).toDouble(),
+    lng: (json['lng'] as num).toDouble(),
+    geohash: json['geohash'] as String,
+    type: HazardType.values.byName(json['type'] as String),
+    confidence: (json['confidence'] as num?)?.toDouble(),
+    severity: json['severity'] == null
+        ? null
+        : SeverityLevel.values.byName(json['severity'] as String),
+    reportedBy: json['reportedBy'] as String,
+    timestamp: DateTime.parse(json['timestamp'] as String),
+    verificationCount: (json['verificationCount'] as num?)?.toInt() ?? 0,
+    status: json['status'] == null
+        ? HazardStatus.unverified
+        : HazardStatus.values.byName(json['status'] as String),
+  );
 }

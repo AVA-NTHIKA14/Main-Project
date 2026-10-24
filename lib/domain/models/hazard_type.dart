@@ -1,5 +1,1 @@
-enum HazardType {
-  pothole,
-  speedBump,
-  unclassified,
-}
+enum HazardType { pothole, speedBump, unclassified }

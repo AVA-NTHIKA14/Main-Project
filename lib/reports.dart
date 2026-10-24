@@ -309,22 +309,22 @@ class _ManualReportFlowState extends State<ManualReportFlow> {
       const SizedBox(height: RoadSenseSpacing.md),
       RadioGroup<HazardSeverity>(
         groupValue: _severity,
-        onChanged: (value) => setState(
-          () => _severity = value ?? HazardSeverity.moderate,
-        ),
+        onChanged: (value) =>
+            setState(() => _severity = value ?? HazardSeverity.moderate),
         child: Column(
-          children: [
-            HazardSeverity.possible,
-            HazardSeverity.moderate,
-            HazardSeverity.high,
-          ]
-              .map(
-                (severity) => RadioListTile<HazardSeverity>(
-                  value: severity,
-                  title: Text(_severityLabel(severity)),
-                ),
-              )
-              .toList(),
+          children:
+              [
+                    HazardSeverity.possible,
+                    HazardSeverity.moderate,
+                    HazardSeverity.high,
+                  ]
+                  .map(
+                    (severity) => RadioListTile<HazardSeverity>(
+                      value: severity,
+                      title: Text(_severityLabel(severity)),
+                    ),
+                  )
+                  .toList(),
         ),
       ),
     ],

@@ -1,0 +1,226 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // Helper Functions
+    // ==========================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() &&
+        (request.auth.token.role == role || request.auth.token[role] == true);
+    }
+
+    function isReviewer() {
+      return hasRole('reviewer') || hasRole('admin') || hasRole('administrator');
+    }
+
+    function isTrustedAdmin() {
+      return hasRole('admin') || hasRole('administrator');
+    }
+
+    function isValidLatitude(lat) {
+      return lat is number && lat >= -90.0 && lat <= 90.0;
+    }
+
+    function isValidLongitude(lng) {
+      return lng is number && lng >= -180.0 && lng <= 180.0;
+    }
+
+    function isValidCoordinates(data) {
+      return ('latitude' in data && 'longitude' in data &&
+              isValidLatitude(data.latitude) && isValidLongitude(data.longitude)) ||
+             ('lat' in data && 'lng' in data &&
+              isValidLatitude(data.lat) && isValidLongitude(data.lng));
+    }
+
+    // Guard against storing device-local file paths in public string fields
+    function isNotLocalPath(str) {
+      return !(str.matches('^file:.*') ||
+               str.matches('^/data/.*') ||
+               str.matches('^/var/.*') ||
+               str.matches('^[a-zA-Z]:[/\\\\].*'));
+    }
+
+    // ==========================================
+    // Collection: users/{uid}
+    // Purpose: User profile and account metadata
+    // ==========================================
+    match /users/{uid} {
+      // User can only read their own profile
+      allow read: if isOwner(uid) || isTrustedAdmin();
+
+      // Creation: must be own profile and cannot escalate role
+      allow create: if isOwner(uid) &&
+        request.resource.data.uid == uid &&
+        (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
+        request.resource.data.email is string;
+
+      // Update: can update displayName, updatedAt; cannot change UID, role, or createdAt
+      allow update: if isOwner(uid) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.role == resource.data.role &&
+        (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt);
+
+      allow delete: if false; // Deletions handled via auth account deletion lifecycle
+    }
+
+    // ==========================================
+    // Collection: trips/{tripId}
+    // Purpose: Trip metadata and ownership
+    // ==========================================
+    match /trips/{tripId} {
+      // Owner can read their own trip
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+
+      // Creation: must attach own UID as ownerUid
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.tripId == tripId &&
+        (!('distanceKm' in request.resource.data) || request.resource.data.distanceKm >= 0);
+
+      // Update: owner can update trip details (e.g. endedAt, duration), but cannot transfer ownership
+      allow update: if isAuthenticated() &&
+        resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.ownerUid == resource.data.ownerUid;
+
+      allow delete: if false;
+
+      // Subcollection: trips/{tripId}/sensorWindows/{windowId}
+      match /sensorWindows/{windowId} {
+        allow read: if isAuthenticated() &&
+          get(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid == request.auth.uid;
+
+        allow create: if isAuthenticated() &&
+          get(/databases/$(database)/documents/trips/$(tripId)).data.ownerUid == request.auth.uid &&
+          request.resource.data.windowId == windowId &&
+          (!('sampleCount' in request.resource.data) || request.resource.data.sampleCount >= 0);
+
+        allow update, delete: if false;
+      }
+    }
+
+    // ==========================================
+    // Collection: reports/{reportId}
+    // Purpose: User-submitted road hazard reports
+    // ==========================================
+    match /reports/{reportId} {
+      // Private reports readable only by the submitting user or reviewers
+      allow read: if isAuthenticated() &&
+        (resource.data.reporterUid == request.auth.uid || isReviewer());
+
+      // Create: Authenticated users can submit reports with validated coordinates
+      allow create: if isAuthenticated() &&
+        request.resource.data.reporterUid == request.auth.uid &&
+        request.resource.data.reportId == reportId &&
+        isValidCoordinates(request.resource.data) &&
+        request.resource.data.status == 'submitted' &&
+        (!('photoUrl' in request.resource.data) || 
+         request.resource.data.photoUrl == null || 
+         isNotLocalPath(request.resource.data.photoUrl));
+
+      // Ordinary clients CANNOT accept, reject, or modify reports
+      // Status changes and review actions belong to trusted backend/reviewers
+      allow update: if isReviewer();
+
+      allow delete: if false;
+    }
+
+    // ==========================================
+    // Collection: hazardObservations/{observationId}
+    // Purpose: Sensor-derived or manual raw observations
+    // ==========================================
+    match /hazardObservations/{observationId} {
+      // Reporter or reviewer can read
+      allow read: if isAuthenticated() &&
+        (resource.data.reporterUid == request.auth.uid || isReviewer());
+
+      // Create: Authenticated users can submit observations with validated coordinates
+      allow create: if isAuthenticated() &&
+        request.resource.data.reporterUid == request.auth.uid &&
+        request.resource.data.observationId == observationId &&
+        isValidCoordinates(request.resource.data);
+
+      // Observations are immutable raw evidence
+      allow update, delete: if false;
+    }
+
+    // ==========================================
+    // Collection: hazards/{hazardId}
+    // Purpose: Shared map hazards for navigation and display
+    // ==========================================
+    match /hazards/{hazardId} {
+      // Public / authenticated read for map display
+      allow read: if isAuthenticated();
+
+      // Ordinary clients CANNOT create, confirm, resolve, or alter hazards directly!
+      // Hazard creation, lifecycle transitions ('verified', 'resolved', 'rejected')
+      // and confidence aggregation MUST be performed by trusted backend code (Cloud Functions / Reviewers).
+      allow create, update, delete: if isReviewer() || isTrustedAdmin();
+    }
+
+    // ==========================================
+    // Collection: verificationDecisions/{decisionId}
+    // Purpose: Authoritative records of hazard verification decisions
+    // ==========================================
+    match /verificationDecisions/{decisionId} {
+      allow read: if isAuthenticated();
+
+      // Ordinary clients CANNOT forge authoritative verification decisions!
+      // Must be created by trusted reviewer or Cloud Function.
+      allow create: if isReviewer() &&
+        request.resource.data.reviewerUid == request.auth.uid &&
+        request.resource.data.decisionId == decisionId;
+
+      allow update, delete: if false; // Decisions are immutable audit logs
+    }
+
+    // ==========================================
+    // Collection: modelPredictions/{predictionId}
+    // Purpose: Machine learning candidate outputs (isolated from map hazards)
+    // ==========================================
+    match /modelPredictions/{predictionId} {
+      allow read: if isAuthenticated();
+
+      // Clients/sensor rigs can log model predictions with valid coordinates
+      allow create: if isAuthenticated() &&
+        isValidCoordinates(request.resource.data) &&
+        request.resource.data.predictionId == predictionId;
+
+      // Model predictions are immutable candidates
+      allow update, delete: if false;
+    }
+
+    // Backward compatibility for legacy detectionEvents collection
+    match /detection_events/{eventId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // ==========================================
+    // Collection: roadSegments/{segmentId}
+    // Purpose: Road-segment metadata and geometries
+    // ==========================================
+    match /roadSegments/{segmentId} {
+      // Read access allowed for road navigation and map matching
+      allow read: if isAuthenticated();
+
+      // Road segment geometries are managed by trusted GIS / admin pipelines
+      allow create, update, delete: if isTrustedAdmin();
+    }
+
+    // Default deny for any unexpected paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

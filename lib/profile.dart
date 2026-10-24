@@ -9,10 +9,12 @@ class ProfileScreen extends StatelessWidget {
     super.key,
     this.name = 'RoadSense driver',
     this.email = 'driver@example.com',
+    this.onSignOut,
   });
 
   final String name;
   final String email;
+  final Future<void> Function()? onSignOut;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -55,11 +57,44 @@ class ProfileScreen extends StatelessWidget {
         const SizedBox(height: RoadSenseSpacing.lg),
         OutlinedButton.icon(
           onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+            MaterialPageRoute<void>(
+              builder: (_) => SettingsScreen(onSignOut: onSignOut),
+            ),
           ),
           icon: const Icon(Icons.settings_outlined),
           label: const Text('Settings'),
         ),
+        if (onSignOut != null) ...[
+          const SizedBox(height: RoadSenseSpacing.sm),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: const Text('Sign out?'),
+                  content: const Text(
+                    'You will be returned to the welcome screen.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext, true),
+                      child: const Text('Sign out'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true) {
+                await onSignOut!();
+              }
+            },
+            icon: const Icon(Icons.logout),
+            label: const Text('Sign out'),
+          ),
+        ],
       ],
     ),
   );
@@ -85,10 +120,16 @@ class _SummaryRow extends StatelessWidget {
 }
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, this.permissionService, this.syncService});
+  const SettingsScreen({
+    super.key,
+    this.permissionService,
+    this.syncService,
+    this.onSignOut,
+  });
 
   final PermissionService? permissionService;
   final SyncService? syncService;
+  final Future<void> Function()? onSignOut;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -216,6 +257,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           onTap: _deleteAccount,
         ),
+        if (widget.onSignOut != null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.logout, color: RoadSenseColors.muted),
+            title: const Text('Sign out'),
+            subtitle: const Text('Sign out of your RoadSense account.'),
+            onTap: () async {
+              Navigator.of(context).popUntil((route) => route.isFirst);
+              await widget.onSignOut!();
+            },
+          ),
         _sectionTitle(context, 'Notifications'),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,

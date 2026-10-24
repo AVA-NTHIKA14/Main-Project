@@ -1,5 +1,1 @@
-enum SeverityLevel {
-  low,
-  medium,
-  high,
-}
+enum SeverityLevel { low, medium, high }

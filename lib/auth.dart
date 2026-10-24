@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 enum UserRole { user, administrator, researcher }
@@ -36,6 +38,8 @@ abstract interface class AuthenticationService {
   Future<void> sendPasswordReset({required String email});
   Future<void> sendEmailVerification();
   Future<void> signOut();
+  Stream<RoadSenseUser?> get authStateChanges;
+  RoadSenseUser? get currentUser;
 }
 
 class AuthException implements Exception {
@@ -49,6 +53,7 @@ class AuthException implements Exception {
 
 class InMemoryUserRepository implements UserRepository {
   final Map<String, RoadSenseUser> _users = {};
+  int _counter = 0;
 
   @override
   Future<RoadSenseUser?> findByEmail(String email) async =>
@@ -60,8 +65,9 @@ class InMemoryUserRepository implements UserRepository {
     required String email,
   }) async {
     final normalizedEmail = email.trim().toLowerCase();
+    _counter++;
     final user = RoadSenseUser(
-      id: normalizedEmail,
+      id: 'mock-uid-$_counter-${normalizedEmail.hashCode.abs()}',
       name: name.trim(),
       email: normalizedEmail,
       role: UserRole.user,
@@ -73,11 +79,23 @@ class InMemoryUserRepository implements UserRepository {
 }
 
 class MockAuthenticationService implements AuthenticationService {
-  MockAuthenticationService({UserRepository? repository})
-    : _repository = repository ?? InMemoryUserRepository();
+  MockAuthenticationService({
+    UserRepository? repository,
+    RoadSenseUser? initialUser,
+  }) : _repository = repository ?? InMemoryUserRepository(),
+       _currentUser = initialUser;
 
   final UserRepository _repository;
   final Map<String, String> _passwords = {};
+  final StreamController<RoadSenseUser?> _authStateController =
+      StreamController<RoadSenseUser?>.broadcast();
+  RoadSenseUser? _currentUser;
+
+  @override
+  Stream<RoadSenseUser?> get authStateChanges => _authStateController.stream;
+
+  @override
+  RoadSenseUser? get currentUser => _currentUser;
 
   @override
   Future<RoadSenseUser> signIn({
@@ -89,6 +107,8 @@ class MockAuthenticationService implements AuthenticationService {
     if (user == null || _passwords[normalizedEmail] != password) {
       throw const AuthException('The email or password is incorrect.');
     }
+    _currentUser = user;
+    _authStateController.add(user);
     return user;
   }
 
@@ -104,6 +124,8 @@ class MockAuthenticationService implements AuthenticationService {
     }
     final user = await _repository.create(name: name, email: normalizedEmail);
     _passwords[normalizedEmail] = password;
+    _currentUser = user;
+    _authStateController.add(user);
     return user;
   }
 
@@ -120,7 +142,14 @@ class MockAuthenticationService implements AuthenticationService {
   Future<void> sendEmailVerification() async {}
 
   @override
-  Future<void> signOut() async {}
+  Future<void> signOut() async {
+    _currentUser = null;
+    _authStateController.add(null);
+  }
+
+  void dispose() {
+    _authStateController.close();
+  }
 }
 
 enum AuthStatus {
@@ -136,10 +165,31 @@ enum AuthStatus {
 
 class AuthController extends ChangeNotifier {
   AuthController({required this._service}) {
-    _status = AuthStatus.signedOut;
+    final current = _service.currentUser;
+    if (current != null) {
+      _user = current;
+      _status = AuthStatus.signedIn;
+    } else {
+      _status = AuthStatus.signedOut;
+    }
+
+    _authSubscription = _service.authStateChanges.listen((user) {
+      if (user != null) {
+        _user = user;
+        _errorMessage = null;
+        _setStatus(AuthStatus.signedIn);
+      } else {
+        if (_status != AuthStatus.signingIn &&
+            _status != AuthStatus.signingUp) {
+          _user = null;
+          _setStatus(AuthStatus.signedOut);
+        }
+      }
+    });
   }
 
   final AuthenticationService _service;
+  StreamSubscription<RoadSenseUser?>? _authSubscription;
   AuthStatus _status = AuthStatus.checking;
   RoadSenseUser? _user;
   String? _errorMessage;
@@ -148,6 +198,12 @@ class AuthController extends ChangeNotifier {
   RoadSenseUser? get user => _user;
   String? get errorMessage => _errorMessage;
   bool get isSignedIn => _status == AuthStatus.signedIn && _user != null;
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
 
   Future<void> signIn({required String email, required String password}) async {
     await _run(

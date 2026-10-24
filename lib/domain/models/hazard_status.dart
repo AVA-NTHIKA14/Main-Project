@@ -1,5 +1,1 @@
-enum HazardStatus {
-  unverified,
-  verified,
-  repaired,
-}
+enum HazardStatus { unverified, verified, repaired }

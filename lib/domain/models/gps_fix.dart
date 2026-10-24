@@ -12,16 +12,16 @@ class GpsFix {
   final DateTime timestamp;
 
   Map<String, dynamic> toJson() => {
-        'lat': lat,
-        'lng': lng,
-        'speed': speed,
-        'timestamp': timestamp.toIso8601String(),
-      };
+    'lat': lat,
+    'lng': lng,
+    'speed': speed,
+    'timestamp': timestamp.toIso8601String(),
+  };
 
   factory GpsFix.fromJson(Map<String, dynamic> json) => GpsFix(
-        lat: (json['lat'] as num).toDouble(),
-        lng: (json['lng'] as num).toDouble(),
-        speed: (json['speed'] as num).toDouble(),
-        timestamp: DateTime.parse(json['timestamp'] as String),
-      );
+    lat: (json['lat'] as num).toDouble(),
+    lng: (json['lng'] as num).toDouble(),
+    speed: (json['speed'] as num).toDouble(),
+    timestamp: DateTime.parse(json['timestamp'] as String),
+  );
 }

@@ -1,10 +1,11 @@
-
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'auth.dart';
 import 'auth_screens.dart';
 import 'admin.dart';
 import 'design_system.dart';
+import 'firebase_auth_service.dart';
 import 'onboarding.dart';
 import 'navigation_services.dart';
 import 'permissions.dart';
@@ -12,8 +13,37 @@ import 'profile.dart';
 import 'route_planning.dart';
 import 'trips.dart';
 
-void main() {
-  runApp(const RoadSenseApp());
+/// Initializes Firebase with diagnostic error handling.
+///
+/// Returns the initialized [FirebaseApp] if successful, or `null` if
+/// initialization fails or platform options are unavailable.
+Future<FirebaseApp?> initializeFirebase({FirebaseOptions? options}) async {
+  try {
+    if (Firebase.apps.isNotEmpty) {
+      debugPrint('[RoadSense] Firebase already initialized.');
+      return Firebase.app();
+    }
+    final app = options != null
+        ? await Firebase.initializeApp(options: options)
+        : await Firebase.initializeApp();
+    debugPrint('[RoadSense] Firebase initialized successfully (${app.name}).');
+    return app;
+  } catch (error) {
+    debugPrint('[RoadSense] Firebase initialization diagnostic: $error');
+    return null;
+  }
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final app = await initializeFirebase();
+  runApp(
+    RoadSenseApp(
+      authenticationService: app != null
+          ? FirebaseAuthService()
+          : MockAuthenticationService(),
+    ),
+  );
 }
 
 class RoadSenseApp extends StatefulWidget {
@@ -39,11 +69,12 @@ class _RoadSenseAppState extends State<RoadSenseApp> {
     super.initState();
 
     _authenticationService =
-        widget.authenticationService ?? MockAuthenticationService();
+        widget.authenticationService ??
+        (Firebase.apps.isNotEmpty
+            ? FirebaseAuthService()
+            : MockAuthenticationService());
 
-    _authController = AuthController(
-      service: _authenticationService,
-    );
+    _authController = AuthController(service: _authenticationService);
   }
 
   @override
@@ -64,6 +95,7 @@ class _RoadSenseAppState extends State<RoadSenseApp> {
               widget.permissionService ?? MockPermissionService(),
           homeBuilder: () => RoadSenseShell(
             authenticationService: _authenticationService,
+            authController: _authController,
           ),
         ),
       ),
@@ -75,9 +107,11 @@ class RoadSenseShell extends StatefulWidget {
   const RoadSenseShell({
     super.key,
     required this.authenticationService,
+    this.authController,
   });
 
   final AuthenticationService authenticationService;
+  final AuthController? authController;
 
   @override
   State<RoadSenseShell> createState() => _RoadSenseShellState();
@@ -105,8 +139,20 @@ class _RoadSenseShellState extends State<RoadSenseShell> {
       ),
       const _SavedPage(),
       const _TripsPage(),
-      const _ProfilePage(),
+      _ProfilePage(
+        authController: widget.authController,
+        authenticationService: widget.authenticationService,
+        onSignOut: _signOut,
+      ),
     ];
+  }
+
+  Future<void> _signOut() async {
+    if (widget.authController != null) {
+      await widget.authController!.signOut();
+    } else {
+      await widget.authenticationService.signOut();
+    }
   }
 
   @override
@@ -166,8 +212,7 @@ class _RoadSenseShellState extends State<RoadSenseShell> {
                   Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => AdminLoginScreen(
-                        authenticationService:
-                            widget.authenticationService,
+                        authenticationService: widget.authenticationService,
                       ),
                     ),
                   );
@@ -191,10 +236,7 @@ class _RoadSenseShellState extends State<RoadSenseShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: IndexedStack(
-          index: _selectedIndex,
-          children: _pages,
-        ),
+        child: IndexedStack(index: _selectedIndex, children: _pages),
       ),
       floatingActionButton: FloatingActionButton.small(
         tooltip: 'Admin access',
@@ -238,17 +280,17 @@ class _SavedPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Saved places')),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'Your saved places and preferred routes will appear here.',
-              textAlign: TextAlign.center,
-            ),
-          ),
+    appBar: AppBar(title: const Text('Saved places')),
+    body: const Center(
+      child: Padding(
+        padding: EdgeInsets.all(24),
+        child: Text(
+          'Your saved places and preferred routes will appear here.',
+          textAlign: TextAlign.center,
         ),
-      );
+      ),
+    ),
+  );
 }
 
 class _TripsPage extends StatelessWidget {
@@ -259,8 +301,25 @@ class _TripsPage extends StatelessWidget {
 }
 
 class _ProfilePage extends StatelessWidget {
-  const _ProfilePage();
+  const _ProfilePage({
+    this.authController,
+    this.authenticationService,
+    this.onSignOut,
+  });
+
+  final AuthController? authController;
+  final AuthenticationService? authenticationService;
+  final Future<void> Function()? onSignOut;
 
   @override
-  Widget build(BuildContext context) => const ProfileScreen();
+  Widget build(BuildContext context) {
+    final user = authController?.user ?? authenticationService?.currentUser;
+    return ProfileScreen(
+      name: user?.name.isNotEmpty == true ? user!.name : 'RoadSense driver',
+      email: user?.email.isNotEmpty == true
+          ? user!.email
+          : 'driver@example.com',
+      onSignOut: onSignOut,
+    );
+  }
 }

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1078799114478",
+    "project_id": "roadsense-cc1f5",
+    "storage_bucket": "roadsense-cc1f5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1078799114478:android:5a8fb776c00259447a13ff",
+        "android_client_info": {
+          "package_name": "com.avanthika.roadsense"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBX8Rf1Cs3KLQUADtEcOPagkiyotafZXeY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

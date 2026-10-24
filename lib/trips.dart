@@ -227,9 +227,7 @@ class _TripListItem extends StatelessWidget {
   Widget build(BuildContext context) => Material(
     color: Colors.transparent,
     child: ListTile(
-      contentPadding: const EdgeInsets.symmetric(
-        vertical: RoadSenseSpacing.sm,
-      ),
+      contentPadding: const EdgeInsets.symmetric(vertical: RoadSenseSpacing.sm),
       onTap: onTap,
       leading: Container(
         padding: const EdgeInsets.all(10),

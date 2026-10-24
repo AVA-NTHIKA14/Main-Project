@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'auth.dart';
 import 'detection.dart';
+import 'domain/schema/schema_documents.dart';
 import 'explore.dart';
 import 'reports.dart';
 import 'sensors.dart';
@@ -9,14 +12,18 @@ import 'verification.dart';
 abstract final class BackendCollections {
   static const users = 'users';
   static const trips = 'trips';
+  static const sensorWindows = 'sensorWindows';
+  static const hazardObservations = 'hazardObservations';
+  static const reports = 'reports';
+  static const hazards = 'hazards';
+  static const verificationDecisions = 'verificationDecisions';
+  static const modelPredictions = 'modelPredictions';
+  static const roadSegments = 'roadSegments';
+
+  // Backward-compatible collection path aliases
   static const sensorReadings = 'sensor_readings';
   static const detectionEvents = 'detection_events';
-  static const hazards = 'hazards';
-  static const hazardObservations = 'hazard_observations';
-  static const roadSegments = 'road_segments';
-  static const reports = 'reports';
   static const crowdClusters = 'crowd_clusters';
-  static const modelPredictions = 'model_predictions';
 }
 
 enum BackendFailure {
@@ -100,6 +107,8 @@ abstract interface class BackendFunctionsService {
 }
 
 abstract interface class FirebaseGateway {
+  Stream<RoadSenseUser?> get authStateChanges;
+  RoadSenseUser? get currentUser;
   Future<RoadSenseUser> signIn({
     required String email,
     required String password,
@@ -116,13 +125,22 @@ abstract interface class FirebaseGateway {
   Future<List<Map<String, Object?>>> queryCollection(
     String collection, {
     Map<String, Object?> filters = const {},
+    String? orderBy,
+    bool descending = false,
     int? limit,
   });
   Future<void> setDocument(
     String collection,
     String id,
+    Map<String, Object?> data, {
+    bool merge = false,
+  });
+  Future<void> updateDocument(
+    String collection,
+    String id,
     Map<String, Object?> data,
   );
+  Future<void> deleteDocument(String collection, String id);
   Future<String> uploadFile({required String path, required List<int> bytes});
   Future<void> callFunction(String name, Map<String, Object?> data);
 }
@@ -177,6 +195,12 @@ class FirebaseBackendAuthService implements BackendAuthService {
   final FirebaseGateway gateway;
 
   @override
+  Stream<RoadSenseUser?> get authStateChanges => gateway.authStateChanges;
+
+  @override
+  RoadSenseUser? get currentUser => gateway.currentUser;
+
+  @override
   Future<RoadSenseUser> signIn({
     required String email,
     required String password,
@@ -218,24 +242,58 @@ class FirebaseUserRepository implements BackendUserRepository {
     required String name,
     required String email,
   }) async {
-    final user = RoadSenseUser(
-      id: email.trim().toLowerCase(),
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
+    final normalizedEmail = email.trim().toLowerCase();
+    final uid =
+        gateway.currentUser?.id ?? 'mock_uid_${normalizedEmail.hashCode.abs()}';
+    if (uid.contains('@')) {
+      throw FormatException('Invalid user UID: $uid. Must not be email.');
+    }
+    final profile = UserProfileDocument(
+      uid: uid,
+      displayName: name.trim(),
+      email: normalizedEmail,
       role: UserRole.user,
+      isEmailVerified: gateway.currentUser?.isEmailVerified ?? false,
+      createdAt: DateTime.now().toUtc(),
     );
-    await updateProfile(user);
-    return user;
+    await gateway.setDocument(
+      BackendCollections.users,
+      profile.uid,
+      profile.toMap(),
+    );
+    return profile.toDomain();
   }
 
   @override
-  Future<void> updateProfile(RoadSenseUser user) =>
-      gateway.setDocument(BackendCollections.users, user.id, {
-        'name': user.name,
-        'email': user.email,
-        'role': user.role.name,
-        'isEmailVerified': user.isEmailVerified,
+  Future<void> updateProfile(RoadSenseUser user) async {
+    if (user.id.contains('@')) {
+      throw FormatException('Invalid user UID: ${user.id}. Must not be email.');
+    }
+    final existing = await gateway.getDocument(
+      BackendCollections.users,
+      user.id,
+    );
+    if (existing == null) {
+      final profile = UserProfileDocument(
+        uid: user.id,
+        displayName: user.name.trim(),
+        email: user.email.trim().toLowerCase(),
+        role: UserRole.user,
+        isEmailVerified: user.isEmailVerified,
+        createdAt: DateTime.now().toUtc(),
+      );
+      await gateway.setDocument(
+        BackendCollections.users,
+        profile.uid,
+        profile.toMap(),
+      );
+    } else {
+      await gateway.updateDocument(BackendCollections.users, user.id, {
+        'displayName': user.name.trim(),
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
       });
+    }
+  }
 }
 
 class FirebaseSensorReadingRepository implements SensorReadingRepository {
@@ -245,11 +303,18 @@ class FirebaseSensorReadingRepository implements SensorReadingRepository {
   Future<void> append({
     required String tripId,
     required SensorReading reading,
-  }) => gateway.setDocument(
-    BackendCollections.sensorReadings,
-    '${tripId}_${reading.timestamp.microsecondsSinceEpoch}',
-    _readingData(tripId, reading),
-  );
+  }) {
+    GeoCoordinates.validated(
+      latitude: reading.gps.latitude,
+      longitude: reading.gps.longitude,
+    );
+    return gateway.setDocument(
+      BackendCollections.sensorReadings,
+      '${tripId}_${reading.timestamp.microsecondsSinceEpoch}',
+      _readingData(tripId, reading),
+    );
+  }
+
   @override
   Future<List<SensorReading>> forTrip(String tripId) async => const [];
 }
@@ -259,22 +324,52 @@ class FirebaseTripHistoryRepository implements BackendTripRepository {
   final FirebaseGateway gateway;
 
   @override
-  Future<void> saveTrip(Trip trip) =>
-      gateway.setDocument(BackendCollections.trips, trip.id, {
-        'startedAt': trip.startedAt.toIso8601String(),
-        'endedAt': trip.endedAt.toIso8601String(),
-        'durationSeconds': trip.duration.inSeconds,
-        'distanceKm': trip.distanceKm,
-        'startLabel': trip.startLabel,
-        'endLabel': trip.endLabel,
-        'roadQuality': trip.roadQuality,
-      });
+  Future<void> saveTrip(Trip trip) async {
+    final activeUser = gateway.currentUser;
+    final ownerUid = activeUser?.id;
+    if (ownerUid == null || ownerUid.isEmpty || ownerUid.contains('@')) {
+      throw const BackendException(
+        BackendFailure.authentication,
+        'Cannot save trip without an authenticated user UID.',
+      );
+    }
+
+    final doc = TripDocument.fromDomain(trip, ownerUid: ownerUid);
+    await gateway.setDocument(BackendCollections.trips, trip.id, doc.toMap());
+  }
 
   @override
-  Future<List<Trip>> recentTrips() async => const [];
+  Future<List<Trip>> recentTrips() async {
+    final activeUser = gateway.currentUser;
+    final ownerUid = activeUser?.id;
+    if (ownerUid == null || ownerUid.isEmpty) {
+      return const [];
+    }
+
+    final docs = await gateway.queryCollection(
+      BackendCollections.trips,
+      filters: {'ownerUid': ownerUid},
+      orderBy: 'startedAt',
+      descending: true,
+      limit: 50,
+    );
+
+    return docs
+        .map(
+          (map) => TripDocument.fromMap(
+            map,
+            documentId: map['id'] as String?,
+          ).toDomain(),
+        )
+        .toList();
+  }
 
   @override
-  Future<Trip?> tripById(String id) async => null;
+  Future<Trip?> tripById(String id) async {
+    final map = await gateway.getDocument(BackendCollections.trips, id);
+    if (map == null) return null;
+    return TripDocument.fromMap(map, documentId: id).toDomain();
+  }
 }
 
 class FirebaseDetectionEventRepository implements DetectionEventRepository {
@@ -283,32 +378,40 @@ class FirebaseDetectionEventRepository implements DetectionEventRepository {
 
   @override
   Future<void> save(DetectionResult result) async {
-    final data = {
-      'classification': result.classification.name,
-      'confidence': result.confidence,
-      'timestamp': result.timestamp.toIso8601String(),
-      'latitude': result.location.latitude,
-      'longitude': result.location.longitude,
-      'speedMps': result.speedMps,
-      'sensorWindowId': result.sensorWindowId,
-      'modelVersion': result.modelVersion,
-      'severityEstimate': result.severityEstimate.name,
-      'source': result.source.name,
-    };
-    await gateway.setDocument(
-      BackendCollections.detectionEvents,
-      result.sensorWindowId,
-      data,
+    final doc = ModelPredictionDocument.fromDomain(
+      result,
+      predictionId: result.sensorWindowId,
     );
     await gateway.setDocument(
       BackendCollections.modelPredictions,
       result.sensorWindowId,
-      data,
+      doc.toMap(),
+    );
+    await gateway.setDocument(
+      BackendCollections.detectionEvents,
+      result.sensorWindowId,
+      doc.toMap(),
     );
   }
 
   @override
-  Future<List<DetectionResult>> recent({int limit = 100}) async => const [];
+  Future<List<DetectionResult>> recent({int limit = 100}) async {
+    final boundedLimit = (limit <= 0 || limit > 100) ? 100 : limit;
+    final docs = await gateway.queryCollection(
+      BackendCollections.modelPredictions,
+      orderBy: 'timestamp',
+      descending: true,
+      limit: boundedLimit,
+    );
+    return docs
+        .map(
+          (map) => ModelPredictionDocument.fromMap(
+            map,
+            documentId: map['id'] as String?,
+          ).toDomain(),
+        )
+        .toList();
+  }
 }
 
 class FirebaseReportRepository implements BackendReportRepository {
@@ -316,43 +419,117 @@ class FirebaseReportRepository implements BackendReportRepository {
   final FirebaseGateway gateway;
   @override
   Future<UserReport> submit(UserReport report) async {
-    await gateway.setDocument(BackendCollections.reports, report.id, {
-      'userId': report.userId,
-      'tripId': report.tripId,
-      'category': report.category.name,
-      'latitude': report.location.latitude,
-      'longitude': report.location.longitude,
-      'severity': report.severity.name,
-      'submittedAt': report.submittedAt.toIso8601String(),
-      'description': report.description,
-    });
-    return report;
+    final coords = GeoCoordinates.validated(
+      latitude: report.location.latitude,
+      longitude: report.location.longitude,
+    );
+
+    final activeUser = gateway.currentUser;
+    final reporterUid = activeUser?.id ?? report.userId;
+    if (reporterUid.isEmpty || reporterUid.contains('@')) {
+      throw const BackendException(
+        BackendFailure.authentication,
+        'Cannot submit report without a valid authenticated user UID.',
+      );
+    }
+
+    if (activeUser != null &&
+        report.userId.isNotEmpty &&
+        report.userId != activeUser.id) {
+      throw const BackendException(
+        BackendFailure.permission,
+        'Reporter UID does not match currently authenticated user.',
+      );
+    }
+
+    final sanitizedPhoto = sanitizePublicUrl(report.photoPath);
+
+    final reportDoc = UserReportDocument(
+      reportId: report.id,
+      reporterUid: reporterUid,
+      tripId: report.tripId,
+      category: report.category,
+      coordinates: coords,
+      severity: report.severity,
+      submittedAt: report.submittedAt.toUtc(),
+      description: report.description,
+      photoUrl: sanitizedPhoto,
+      status: ReportStatus.submitted,
+    );
+
+    await gateway.setDocument(
+      BackendCollections.reports,
+      report.id,
+      reportDoc.toMap(),
+    );
+    return reportDoc.toDomain();
   }
 
   @override
-  Future<List<UserReport>> reportsForUser(String userId) async => const [];
+  Future<List<UserReport>> reportsForUser(String userId) async {
+    if (userId.isEmpty || userId.contains('@')) {
+      return const [];
+    }
+
+    final rawDocs = await gateway.queryCollection(
+      BackendCollections.reports,
+      filters: {'reporterUid': userId},
+      limit: 100,
+    );
+
+    return rawDocs
+        .map(
+          (map) => UserReportDocument.fromMap(
+            map,
+            documentId: map['id'] as String?,
+          ).toDomain(),
+        )
+        .toList();
+  }
 }
 
 class FirebaseHazardRepository implements HazardRepository {
   const FirebaseHazardRepository(this.gateway);
   final FirebaseGateway gateway;
   @override
-  Future<void> save(Hazard hazard) =>
-      gateway.setDocument(BackendCollections.hazards, hazard.id, {
-        'segmentId': hazard.segmentId,
-        'type': hazard.type.name,
-        'severity': hazard.severity.name,
-        'status': hazard.status.name,
-        'confidence': hazard.confidence,
-        'firstObserved': hazard.firstObserved.toIso8601String(),
-        'lastObserved': hazard.lastObserved.toIso8601String(),
-      });
+  Future<void> save(Hazard hazard) {
+    final doc = HazardDocument.fromDomain(hazard);
+    return gateway.setDocument(
+      BackendCollections.hazards,
+      hazard.id,
+      doc.toMap(),
+    );
+  }
+
   @override
-  Future<List<Hazard>> list({VerificationStatus? status}) async => const [];
+  Future<List<Hazard>> list({VerificationStatus? status}) async {
+    final filters = <String, Object?>{};
+    if (status != null) {
+      filters['status'] = status.name;
+    }
+    final docs = await gateway.queryCollection(
+      BackendCollections.hazards,
+      filters: filters,
+      limit: 100,
+    );
+    return docs
+        .map(
+          (map) => HazardDocument.fromMap(
+            map,
+            documentId: map['id'] as String?,
+          ).toDomain(),
+        )
+        .toList();
+  }
+
   @override
   Future<void> updateStatus(String hazardId, VerificationStatus status) =>
-      gateway.setDocument(BackendCollections.hazards, hazardId, {
+      gateway.updateDocument(BackendCollections.hazards, hazardId, {
         'status': status.name,
+        if (status == VerificationStatus.verified)
+          'lastConfirmedAt': DateTime.now().toUtc().toIso8601String(),
+        if (status == VerificationStatus.resolved)
+          'resolvedAt': DateTime.now().toUtc().toIso8601String(),
       });
 }
 
@@ -362,23 +539,38 @@ class FirebaseHazardObservationRepository
   final FirebaseGateway gateway;
 
   @override
-  Future<void> save(HazardObservation observation) => gateway.setDocument(
-    BackendCollections.hazardObservations,
-    observation.id,
-    {
-      'segmentId': observation.segmentId,
-      'userId': observation.userId,
-      'tripId': observation.tripId,
-      'type': observation.type.name,
-      'severity': observation.severity.name,
-      'latitude': observation.location.latitude,
-      'longitude': observation.location.longitude,
-      'timestamp': observation.timestamp.toIso8601String(),
-    },
-  );
+  Future<void> save(HazardObservation observation) {
+    final doc = HazardObservationDocument.fromDomain(observation);
+    return gateway.setDocument(
+      BackendCollections.hazardObservations,
+      observation.id,
+      doc.toMap(),
+    );
+  }
 
   @override
-  Future<List<HazardObservation>> forHazard(String hazardId) async => const [];
+  Future<List<HazardObservation>> forHazard(String hazardId) async {
+    var docs = await gateway.queryCollection(
+      BackendCollections.hazardObservations,
+      filters: {'segmentId': hazardId},
+      limit: 100,
+    );
+    if (docs.isEmpty) {
+      docs = await gateway.queryCollection(
+        BackendCollections.hazardObservations,
+        filters: {'hazardId': hazardId},
+        limit: 100,
+      );
+    }
+    return docs
+        .map(
+          (map) => HazardObservationDocument.fromMap(
+            map,
+            documentId: map['id'] as String?,
+          ).toDomain(),
+        )
+        .toList();
+  }
 }
 
 class FirebaseVerificationRepository implements VerificationRepository {
@@ -404,10 +596,24 @@ class FirebaseVerificationRepository implements VerificationRepository {
     required String clusterId,
     required VerificationStatus status,
     required String reviewerId,
-  }) => gateway.setDocument(BackendCollections.crowdClusters, clusterId, {
-    'status': status.name,
-    'reviewerId': reviewerId,
-  });
+  }) async {
+    final decision = VerificationDecisionDocument(
+      decisionId: '${clusterId}_${DateTime.now().millisecondsSinceEpoch}',
+      hazardId: clusterId,
+      reviewerUid: reviewerId,
+      status: status,
+      timestamp: DateTime.now().toUtc(),
+    );
+    await gateway.setDocument(
+      BackendCollections.verificationDecisions,
+      decision.decisionId,
+      decision.toMap(),
+    );
+    await gateway.setDocument(BackendCollections.crowdClusters, clusterId, {
+      'status': status.name,
+      'reviewerId': reviewerId,
+    }, merge: true);
+  }
 }
 
 class FirebaseRoadSegmentRepository implements RoadSegmentRepository {
@@ -445,9 +651,15 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
 
   bool networkAvailable;
   final Map<String, Map<String, Map<String, Object?>>> _collections = {};
+  final StreamController<RoadSenseUser?> _authStateController =
+      StreamController<RoadSenseUser?>.broadcast();
   RoadSenseUser? _currentUser;
 
+  @override
   RoadSenseUser? get currentUser => _currentUser;
+
+  @override
+  Stream<RoadSenseUser?> get authStateChanges => _authStateController.stream;
 
   @override
   Future<RoadSenseUser> signIn({
@@ -455,15 +667,25 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
     required String password,
   }) async {
     _requireNetwork();
+    final normalizedEmail = email.trim().toLowerCase();
+    final users = await queryCollection(
+      BackendCollections.users,
+      filters: {'email': normalizedEmail},
+      limit: 1,
+    );
     final document =
-        _collections[BackendCollections.users]?[email.trim().toLowerCase()];
+        users.firstOrNull ??
+        _collections[BackendCollections.users]?[normalizedEmail];
     if (document == null) {
       throw const BackendException(
         BackendFailure.authentication,
         'Account not found.',
       );
     }
-    return _userFrom(document)!;
+    final user = _userFrom(document)!;
+    _currentUser = user;
+    _authStateController.add(user);
+    return user;
   }
 
   @override
@@ -473,19 +695,25 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
     required String password,
   }) async {
     _requireNetwork();
+    final normalizedEmail = email.trim().toLowerCase();
     final user = RoadSenseUser(
-      id: email.trim().toLowerCase(),
+      id: 'mock_uid_${normalizedEmail.hashCode.abs()}',
       name: name,
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
       role: UserRole.user,
     );
     await setDocument(BackendCollections.users, user.id, {
+      'id': user.id,
+      'uid': user.id,
       'name': user.name,
+      'displayName': user.name,
       'email': user.email,
       'role': user.role.name,
       'isEmailVerified': true,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
     });
     _currentUser = user;
+    _authStateController.add(user);
     return user;
   }
 
@@ -500,32 +728,64 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
   }
 
   @override
-  Future<void> signOut() async => _currentUser = null;
+  Future<void> signOut() async {
+    _currentUser = null;
+    _authStateController.add(null);
+  }
+
   @override
   Future<Map<String, Object?>?> getDocument(
     String collection,
     String id,
   ) async {
     _requireNetwork();
-    return _collections[collection]?[id];
+    final doc = _collections[collection]?[id];
+    if (doc == null) return null;
+    final copy = Map<String, Object?>.from(doc);
+    copy.putIfAbsent('id', () => id);
+    return copy;
   }
 
   @override
   Future<List<Map<String, Object?>>> queryCollection(
     String collection, {
     Map<String, Object?> filters = const {},
+    String? orderBy,
+    bool descending = false,
     int? limit,
   }) async {
     _requireNetwork();
-    var values =
-        (_collections[collection]?.values ?? const <Map<String, Object?>>[])
-            .where(
-              (document) => filters.entries.every(
-                (entry) => document[entry.key] == entry.value,
-              ),
-            )
-            .toList();
-    if (limit != null) values = values.take(limit).toList();
+    var values = (_collections[collection]?.entries ?? const [])
+        .where(
+          (entry) => filters.entries.every(
+            (filter) => entry.value[filter.key] == filter.value,
+          ),
+        )
+        .map((entry) {
+          final copy = Map<String, Object?>.from(entry.value);
+          copy.putIfAbsent('id', () => entry.key);
+          return copy;
+        })
+        .toList();
+
+    if (orderBy != null) {
+      values.sort((a, b) {
+        final valA = a[orderBy];
+        final valB = b[orderBy];
+        if (valA == null && valB == null) return 0;
+        if (valA == null) return descending ? 1 : -1;
+        if (valB == null) return descending ? -1 : 1;
+        if (valA is Comparable && valB is Comparable) {
+          final comp = valA.compareTo(valB);
+          return descending ? -comp : comp;
+        }
+        return 0;
+      });
+    }
+
+    if (limit != null && limit > 0) {
+      values = values.take(limit).toList();
+    }
     return values;
   }
 
@@ -533,11 +793,39 @@ class InMemoryFirebaseGateway implements FirebaseGateway {
   Future<void> setDocument(
     String collection,
     String id,
+    Map<String, Object?> data, {
+    bool merge = false,
+  }) async {
+    _requireNetwork();
+    final col = _collections.putIfAbsent(collection, () => {});
+    if (merge && col.containsKey(id)) {
+      col[id] = {...col[id]!, ...data};
+    } else {
+      col[id] = Map<String, Object?>.from(data);
+    }
+  }
+
+  @override
+  Future<void> updateDocument(
+    String collection,
+    String id,
     Map<String, Object?> data,
   ) async {
     _requireNetwork();
-    _collections.putIfAbsent(collection, () => {})[id] =
-        Map<String, Object?>.from(data);
+    final col = _collections[collection];
+    if (col == null || !col.containsKey(id)) {
+      throw const BackendException(
+        BackendFailure.unavailable,
+        'Document not found for update.',
+      );
+    }
+    col[id] = {...col[id]!, ...data};
+  }
+
+  @override
+  Future<void> deleteDocument(String collection, String id) async {
+    _requireNetwork();
+    _collections[collection]?.remove(id);
   }
 
   @override
@@ -584,13 +872,7 @@ class InMemoryBackendUserRepository implements BackendUserRepository {
 
 RoadSenseUser? _userFrom(Map<String, Object?>? data) {
   if (data == null) return null;
-  return RoadSenseUser(
-    id: (data['id'] ?? data['email'])! as String,
-    name: data['name']! as String,
-    email: data['email']! as String,
-    role: UserRole.values.byName((data['role'] ?? 'user') as String),
-    isEmailVerified: data['isEmailVerified'] as bool? ?? false,
-  );
+  return UserProfileDocument.fromMap(data).toDomain();
 }
 
 Map<String, Object?> _readingData(String tripId, SensorReading reading) => {

@@ -1,1 +1,9 @@
-enum HazardStatus { unverified, verified, repaired }
+enum HazardStatus {
+  unverified,
+  verified,
+  closureRequested,
+  repaired,
+  rejected,
+  expired,
+}
+

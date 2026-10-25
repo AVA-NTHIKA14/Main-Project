@@ -67,30 +67,39 @@ class VerificationService {
 
   final VerificationRules rules;
 
-  List<CrowdCluster> cluster(List<HazardObservation> observations) {
-    final clusters = <CrowdCluster>[];
-    for (final observation in observations) {
-      CrowdCluster? match;
-      for (final candidate in clusters) {
-        if (_belongsTo(candidate, observation)) {
-          match = candidate;
-          break;
-        }
-      }
-      if (match == null) {
-        clusters.add(
-          CrowdCluster(
-            id: 'cluster-${clusters.length + 1}',
-            observations: [observation],
-          ),
-        );
-      } else {
-        match.observations.add(observation);
+ List<CrowdCluster> cluster(List<HazardObservation> observations) {
+  final clusters = <CrowdCluster>[];
+  final seenIds = <String>{};
+
+  for (final observation in observations) {
+    // Ignore duplicate observation IDs.
+    if (!seenIds.add(observation.id)) {
+      continue;
+    }
+
+    CrowdCluster? match;
+
+    for (final candidate in clusters) {
+      if (_belongsTo(candidate, observation)) {
+        match = candidate;
+        break;
       }
     }
-    return clusters;
+
+    if (match == null) {
+      clusters.add(
+        CrowdCluster(
+          id: 'cluster-${clusters.length + 1}',
+          observations: [observation],
+        ),
+      );
+    } else {
+      match.observations.add(observation);
+    }
   }
 
+  return clusters;
+}
   List<Hazard> process(List<HazardObservation> observations) =>
       cluster(observations).map(toHazard).toList(growable: false);
 

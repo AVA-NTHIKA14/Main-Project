@@ -3,6 +3,10 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 
 import 'design_system.dart';
+import 'domain/route_hazard_matcher.dart';
+import 'domain/route_risk.dart';
+import 'map/hazard_source.dart';
+import 'map/navigation_controller.dart';
 import 'navigation_services.dart';
 
 const _roadSenseTileUrl = String.fromEnvironment(
@@ -16,11 +20,16 @@ class RoutePlanningScreen extends StatefulWidget {
     required this.placeSearchService,
     required this.routeCalculationService,
     required this.recentPlaceStore,
+    this.hazardSource,
+    this.positionStream,
   });
 
   final PlaceSearchService placeSearchService;
-  final RouteCalculationService routeCalculationService;
+
   final RecentPlaceStore recentPlaceStore;
+  final HazardSource? hazardSource;
+  final Stream<NavFix>? positionStream;
+  final RouteCalculationService routeCalculationService;
 
   @override
   State<RoutePlanningScreen> createState() => _RoutePlanningScreenState();
@@ -194,10 +203,8 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen> {
                 const ListTile(
                   leading: Icon(Icons.shield_outlined),
                   title: Text('Hazard-aware route scoring'),
-                  subtitle: Text(
-                    'Available when RoadSense hazard data is connected.',
-                  ),
-                  enabled: false,
+                  subtitle: Text('Active with RoadSense geometry matcher.'),
+                  enabled: true,
                 ),
               ],
             ),
@@ -252,6 +259,9 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen> {
         to: _to!,
         routes: routes,
         onBack: () => setState(() => _routes = null),
+        hazardSource: widget.hazardSource,
+        routeCalculationService: widget.routeCalculationService,
+        positionStream: widget.positionStream,
       );
     }
     return Scaffold(
@@ -309,148 +319,138 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen> {
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _RoutePlacesCard(
-                      from: _from,
-                      to: _to,
-                      onChooseFrom: () => _choosePlace(isOrigin: true),
-                      onChooseTo: () => _choosePlace(isOrigin: false),
-                      onSwap: _swapPlaces,
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-                    child: Row(
-                      children: [
-                        TextButton.icon(
-                          onPressed: _chooseDeparture,
-                          icon: const Icon(Icons.schedule),
-                          label: Text(_departure),
-                        ),
-                        const Spacer(),
-                        OutlinedButton.icon(
-                          onPressed: _showOptions,
-                          icon: const Icon(Icons.tune),
-                          label: const Text('Route options'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: SizedBox(
-                      height: 56,
-                      child: FilledButton.icon(
-                        onPressed: _calculatingRoute ? null : _findRoute,
-                        icon: _calculatingRoute
-                            ? const SizedBox.square(
-                                dimension: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.near_me),
-                        label: Text(
-                          _calculatingRoute ? 'Finding route…' : 'Find route',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x12000000),
+                            blurRadius: 18,
+                            offset: Offset(0, 4),
                           ),
-                        ),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF087F75),
-                          shape: const StadiumBorder(),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            _PlaceField(
+                              label: 'Starting point',
+                              place: _from,
+                              icon: Icons.trip_origin,
+                              iconColor: const Color(0xFF087F75),
+                              onTap: () => _choosePlace(isOrigin: true),
+                            ),
+                            const Divider(height: 1),
+                            _PlaceField(
+                              label: 'Destination',
+                              place: _to,
+                              icon: Icons.location_on,
+                              iconColor: const Color(0xFFE53935),
+                              onTap: () => _choosePlace(isOrigin: false),
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    icon: const Icon(Icons.schedule),
+                                    label: Text(
+                                      _departure,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    onPressed: _chooseDeparture,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton.outlined(
+                                  tooltip: 'Swap places',
+                                  onPressed: _from != null && _to != null
+                                      ? _swapPlaces
+                                      : null,
+                                  icon: const Icon(Icons.swap_vert),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton.outlined(
+                                  tooltip: 'Route options',
+                                  onPressed: _showOptions,
+                                  icon: const Icon(Icons.tune),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: FilledButton.icon(
+                      icon: _calculatingRoute
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.directions_car),
+                      label: Text(
+                        _calculatingRoute ? 'Finding route...' : 'Find route',
+                      ),
+                      onPressed: _calculatingRoute ? null : _findRoute,
                     ),
                   ),
                   if (_errorMessage != null)
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-                      child: Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: RoadSenseColors.red),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFEBEE),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFFFCDD2)),
+                        ),
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(color: RoadSenseColors.red),
+                        ),
                       ),
                     ),
+                  const SizedBox(height: 24),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           'Recent places',
-                          style: Theme.of(context).textTheme.titleLarge,
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
-                        const Spacer(),
                         if (_recentPlaces.isNotEmpty)
-                          TextButton(
-                            onPressed: () => _showAllRecentPlaces(),
-                            child: const Text('See all'),
+                          Text(
+                            '${_recentPlaces.length} saved',
+                            style: const TextStyle(
+                              color: RoadSenseColors.muted,
+                              fontSize: 12,
+                            ),
                           ),
                       ],
                     ),
                   ),
+                  const SizedBox(height: 8),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _RecentPlacesCard(
-                      places: _recentPlaces,
+                    child: _RecentPlacesSection(
                       loading: _loadingRecentPlaces,
+                      places: _recentPlaces,
                       onSelect: _selectRecent,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    height: 138,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Image.asset(
-                          'assets/welcome_road.png',
-                          fit: BoxFit.cover,
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 16),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: .9),
-                              borderRadius: BorderRadius.circular(28),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.verified_user,
-                                  color: Color(0xFF087F75),
-                                  size: 30,
-                                ),
-                                SizedBox(width: 10),
-                                Text(
-                                  'Safer journeys\nwith every user.',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.only(top: 6),
-                    child: Center(
-                      child: Text(
-                        'Place search © OpenStreetMap contributors',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: RoadSenseColors.muted,
-                        ),
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
@@ -459,144 +459,80 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen> {
       ),
     );
   }
-
-  Future<void> _showAllRecentPlaces() async {
-    final place = await showModalBottomSheet<RoutePlace>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SingleChildScrollView(
-        child: _RecentPlacesCard(
-          places: _recentPlaces,
-          loading: false,
-          onSelect: (place) => Navigator.pop(context, place),
-        ),
-      ),
-    );
-    if (place != null && mounted) _selectRecent(place);
-  }
 }
 
-class _RoutePlacesCard extends StatelessWidget {
-  const _RoutePlacesCard({
-    required this.from,
-    required this.to,
-    required this.onChooseFrom,
-    required this.onChooseTo,
-    required this.onSwap,
-  });
-
-  final RoutePlace? from;
-  final RoutePlace? to;
-  final VoidCallback onChooseFrom;
-  final VoidCallback onChooseTo;
-  final VoidCallback onSwap;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
-      boxShadow: const [
-        BoxShadow(
-          color: Color(0x12000000),
-          blurRadius: 18,
-          offset: Offset(0, 4),
-        ),
-      ],
-    ),
-    child: Column(
-      children: [
-        _PlaceInput(
-          label: 'From',
-          hint: 'Choose starting point',
-          place: from,
-          icon: Icons.circle,
-          onTap: onChooseFrom,
-          trailing: IconButton(
-            tooltip: 'Swap start and destination',
-            onPressed: onSwap,
-            icon: const Icon(Icons.swap_vert),
-          ),
-        ),
-        const Divider(height: 1, indent: 48),
-        _PlaceInput(
-          label: 'To',
-          hint: 'Search destination',
-          place: to,
-          icon: Icons.place,
-          onTap: onChooseTo,
-          trailing: const SizedBox(width: 48),
-        ),
-      ],
-    ),
-  );
-}
-
-class _PlaceInput extends StatelessWidget {
-  const _PlaceInput({
+class _PlaceField extends StatelessWidget {
+  const _PlaceField({
     required this.label,
-    required this.hint,
     required this.place,
     required this.icon,
+    required this.iconColor,
     required this.onTap,
-    required this.trailing,
   });
 
   final String label;
-  final String hint;
   final RoutePlace? place;
   final IconData icon;
+  final Color iconColor;
   final VoidCallback onTap;
-  final Widget trailing;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 76,
-    child: Row(
-      children: [
-        SizedBox(width: 44, child: Icon(icon, color: const Color(0xFF087F75))),
-        Expanded(
-          child: InkWell(
-            onTap: onTap,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(color: RoadSenseColors.muted),
-                ),
-                Text(
-                  place == null ? hint : _placeLabel(place!),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: place == null
-                        ? RoadSenseColors.muted
-                        : RoadSenseColors.ink,
-                    fontSize: 17,
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Icon(icon, color: iconColor),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: RoadSenseColors.muted,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 2),
+                  Text(
+                    place != null ? _placeLabel(place!) : 'Choose a place',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: place != null
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      color: place != null
+                          ? RoadSenseColors.ink
+                          : RoadSenseColors.muted,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
+            const Icon(Icons.chevron_right, color: RoadSenseColors.muted),
+          ],
         ),
-        trailing,
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
-class _RecentPlacesCard extends StatelessWidget {
-  const _RecentPlacesCard({
-    required this.places,
+class _RecentPlacesSection extends StatelessWidget {
+  const _RecentPlacesSection({
     required this.loading,
+    required this.places,
     required this.onSelect,
   });
 
-  final List<RoutePlace> places;
   final bool loading;
+  final List<RoutePlace> places;
   final ValueChanged<RoutePlace> onSelect;
 
   @override
@@ -802,12 +738,18 @@ class _RouteResultsScreen extends StatefulWidget {
     required this.to,
     required this.routes,
     required this.onBack,
+    this.routeCalculationService,
+    this.hazardSource,
+    this.positionStream,
   });
 
   final RoutePlace from;
   final RoutePlace to;
   final List<CalculatedRoute> routes;
   final VoidCallback onBack;
+  final HazardSource? hazardSource;
+  final Stream<NavFix>? positionStream;
+  final RouteCalculationService? routeCalculationService;
 
   @override
   State<_RouteResultsScreen> createState() => _RouteResultsScreenState();
@@ -815,15 +757,251 @@ class _RouteResultsScreen extends StatefulWidget {
 
 class _RouteResultsScreenState extends State<_RouteResultsScreen> {
   int _selectedRoute = 0;
+  late final HazardSource _hazardSource;
+  final RouteHazardMatcher _matcher = const RouteHazardMatcher();
+  final RouteRiskCalculator _riskCalculator = const RouteRiskCalculator();
+  final MapController _mapController = MapController();
+  LiveTrackingController? _trackingController;
+  List<RouteHazardPoint> _loadedHazards = const [];
+
+  bool _loadingHazards = true;
+  String? _hazardError;
+  Map<int, RouteRisk> _routeRisks = {};
+  Map<int, RouteTradeOff> _tradeOffs = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _hazardSource =
+        widget.hazardSource ??
+        (DebugHazardSource.isEnabled
+            ? const DebugHazardSource()
+            : const EmptyHazardSource());
+    _loadHazards();
+  }
+
+  Future<void> _loadHazards() async {
+    setState(() {
+      _loadingHazards = true;
+      _hazardError = null;
+    });
+    try {
+      final allPoints = widget.routes.expand((r) => r.points).toList();
+      final hazards = await _hazardSource.getHazards(routePoints: allPoints);
+
+      final risks = <int, RouteRisk>{};
+      for (var i = 0; i < widget.routes.length; i++) {
+        final matches = _matcher.match(
+          route: widget.routes[i].points,
+          hazards: hazards,
+        );
+        risks[i] = _riskCalculator.calculateRisk(matches);
+      }
+
+      final tradeOffs = <int, RouteTradeOff>{};
+      if (widget.routes.isNotEmpty) {
+        final baselineRisk = risks[0] ?? RouteRisk.zero;
+        final baselineDuration = widget.routes[0].durationSeconds;
+        for (var i = 1; i < widget.routes.length; i++) {
+          tradeOffs[i] = _riskCalculator.evaluateTradeOff(
+            routeIndex: i,
+            baselineDurationSeconds: baselineDuration,
+            baselineRisk: baselineRisk,
+            alternativeDurationSeconds: widget.routes[i].durationSeconds,
+            alternativeRisk: risks[i] ?? RouteRisk.zero,
+          );
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _loadedHazards = hazards;
+          _routeRisks = risks;
+          _tradeOffs = tradeOffs;
+          _loadingHazards = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hazardError = e.toString();
+          _loadingHazards = false;
+        });
+      }
+    }
+  }
+
+  bool get _isNavigating =>
+      _trackingController != null &&
+      _trackingController!.status != NavigationStatus.stopped &&
+      _trackingController!.status != NavigationStatus.idle;
+
+  void _startNavigation() {
+    final route = widget.routes[_selectedRoute];
+    final controller = LiveTrackingController(
+      initialRoute: route,
+      destination: widget.to.point,
+      routeRecalculator: (from, to) async {
+        if (widget.routeCalculationService != null) {
+          final res = await widget.routeCalculationService!.calculate(
+            from: RoutePlace(
+              name: 'Current location',
+              subtitle: '',
+              latitude: from.latitude,
+              longitude: from.longitude,
+            ),
+            to: widget.to,
+            includeAlternatives: false,
+          );
+          return res.isNotEmpty ? res.first : null;
+        }
+        return null;
+      },
+      initialHazards: _loadedHazards,
+    );
+
+    controller.addListener(() {
+      if (mounted) setState(() {});
+    });
+
+    final stream =
+        widget.positionStream ??
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 5,
+          ),
+        ).map(NavFix.fromPosition);
+
+    controller.startTracking(stream);
+    setState(() => _trackingController = controller);
+  }
+
+  void _stopNavigation() {
+    _trackingController?.stopTracking();
+    _trackingController?.dispose();
+    setState(() => _trackingController = null);
+  }
+
+  void _recenter() {
+    final fix = _trackingController?.lastFix;
+    if (fix != null) {
+      _mapController.move(fix.latLng, 16.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _trackingController?.stopTracking();
+    _trackingController?.dispose();
+    super.dispose();
+  }
+
+  void _showHazardDetails(RouteHazardPoint hazard) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: hazard.severityLabel.toLowerCase() == 'high'
+                        ? const Color(0xFFD32F2F)
+                        : const Color(0xFFF57C00),
+                    size: 28,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      hazard.typeLabel.toUpperCase(),
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  if (_hazardSource.isSampleData)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF8E1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFFFE082)),
+                      ),
+                      child: const Text(
+                        'Sample data',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFF57F17),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.speed),
+                title: const Text('Severity'),
+                trailing: Text(
+                  hazard.severityLabel.toUpperCase(),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: hazard.severityLabel.toLowerCase() == 'high'
+                        ? const Color(0xFFD32F2F)
+                        : const Color(0xFFF57C00),
+                  ),
+                ),
+              ),
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.access_time),
+                title: const Text('Last observed'),
+                trailing: Text(
+                  '${DateTime.now().difference(hazard.lastObserved).inHours} hours ago',
+                ),
+              ),
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.visibility_outlined),
+                title: const Text('Observations'),
+                trailing: Text('${hazard.observationCount} reports'),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Hazard scores are relative ranking aids and not validated probabilities. Never assume a route is free of hazards.',
+                style: TextStyle(fontSize: 11, color: RoadSenseColors.muted),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final allPoints = widget.routes.expand((route) => route.points).toList();
     final bounds = LatLngBounds.fromPoints(allPoints);
+    final currentRisk = _routeRisks[_selectedRoute] ?? RouteRisk.zero;
+
     return Scaffold(
       body: Stack(
         children: [
           FlutterMap(
+            mapController: _mapController,
             options: MapOptions(
               initialCameraFit: CameraFit.bounds(
                 bounds: bounds,
@@ -833,7 +1011,7 @@ class _RouteResultsScreenState extends State<_RouteResultsScreen> {
             children: [
               TileLayer(
                 urlTemplate: _roadSenseTileUrl,
-                userAgentPackageName: 'com.example.roadsense',
+                userAgentPackageName: 'com.avanthika.roadsense',
                 maxNativeZoom: 19,
               ),
               PolylineLayer(
@@ -844,7 +1022,9 @@ class _RouteResultsScreenState extends State<_RouteResultsScreen> {
                     index--
                   )
                     Polyline(
-                      points: widget.routes[index].points,
+                      points: (_isNavigating && index == _selectedRoute)
+                          ? _trackingController!.currentRoute.points
+                          : widget.routes[index].points,
                       color: index == _selectedRoute
                           ? const Color(0xFF087F75)
                           : const Color(0xAA71818A),
@@ -874,11 +1054,66 @@ class _RouteResultsScreenState extends State<_RouteResultsScreen> {
                       size: 40,
                     ),
                   ),
+                  if (_trackingController?.lastFix != null)
+                    Marker(
+                      point: _trackingController!.lastFix!.latLng,
+                      width: 42,
+                      height: 42,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1976D2),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black38, blurRadius: 6),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.navigation,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                  for (final match in currentRisk.eligibleHazards)
+                    Marker(
+                      point: match.hazard.point,
+                      width: 38,
+                      height: 38,
+                      child: GestureDetector(
+                        onTap: () => _showHazardDetails(match.hazard),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color:
+                                match.hazard.severityLabel.toLowerCase() ==
+                                    'high'
+                                ? const Color(0xFFD32F2F)
+                                : const Color(0xFFF57C00),
+                            shape: BoxShape.circle,
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black26,
+                                blurRadius: 4,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: Icon(
+                            match.hazard.severityLabel.toLowerCase() == 'high'
+                                ? Icons.warning_amber_rounded
+                                : Icons.report_problem_outlined,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
               RichAttributionWidget(
                 attributions: const [
-                  TextSourceAttribution('© OpenStreetMap contributors'),
+                  TextSourceAttribution('Ãƒâ€šÃ‚Â© OpenStreetMap contributors'),
                 ],
                 alignment: AttributionAlignment.bottomRight,
               ),
@@ -898,6 +1133,77 @@ class _RouteResultsScreenState extends State<_RouteResultsScreen> {
               ),
             ),
           ),
+          if (_trackingController?.currentAlert != null)
+            Positioned(
+              top: 70,
+              left: 16,
+              right: 16,
+              child: Material(
+                color: const Color(0xFFD32F2F),
+                elevation: 6,
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Hazard Ahead',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            Text(
+                              '${_trackingController!.currentAlert!.hazard.typeLabel} in ${_trackingController!.currentAlert!.distanceMeters.toStringAsFixed(0)} m',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        tooltip: 'Dismiss alert',
+                        onPressed: _trackingController!.dismissAlert,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (_isNavigating)
+            Positioned(
+              right: 16,
+              bottom: 300,
+              child: Material(
+                color: Colors.white,
+                elevation: 4,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Recenter on location',
+                  color: const Color(0xFF087F75),
+                  icon: const Icon(Icons.my_location),
+                  onPressed: _recenter,
+                ),
+              ),
+            ),
           Positioned(
             left: 12,
             right: 12,
@@ -924,7 +1230,61 @@ class _RouteResultsScreenState extends State<_RouteResultsScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 12),
-                    for (var index = 0; index < widget.routes.length; index++)
+                    if (_loadingHazards)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 8),
+                        child: LinearProgressIndicator(minHeight: 2),
+                      ),
+                    if (_hazardError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Hazard data unavailable: $_hazardError',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: RoadSenseColors.muted,
+                          ),
+                        ),
+                      ),
+                    if (currentRisk.firstHighSeverityHazard != null) ...[
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF3E0),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFFFB74D)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.warning_rounded,
+                              color: Color(0xFFE65100),
+                              size: 22,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Hazard ahead: high-severity ${currentRisk.firstHighSeverityHazard!.hazard.typeLabel} Ãƒâ€šÃ‚Â· ${currentRisk.firstHighSeverityHazard!.distanceAlongRouteMeters.round()} m along route${_hazardSource.isSampleData ? ' (Sample data)' : ''}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFFBF360C),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    for (
+                      var index = 0;
+                      index < widget.routes.length;
+                      index++
+                    ) ...[
                       ListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
@@ -939,13 +1299,96 @@ class _RouteResultsScreenState extends State<_RouteResultsScreen> {
                         title: Text(
                           '${widget.routes[index].durationLabel} - ${widget.routes[index].distanceLabel}',
                         ),
-                        subtitle: Text(
-                          index == 0 ? 'Fastest route' : 'Alternative route',
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              index == 0
+                                  ? 'Fastest route'
+                                  : 'Alternative route',
+                            ),
+                            if (_tradeOffs.containsKey(index))
+                              Text(
+                                _tradeOffs[index]!.isRecommended
+                                    ? '${_tradeOffs[index]!.tradeOffText} (Recommended)'
+                                    : _tradeOffs[index]!.tradeOffText,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: _tradeOffs[index]!.isRecommended
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                  color: _tradeOffs[index]!.isRecommended
+                                      ? const Color(0xFF087F75)
+                                      : RoadSenseColors.muted,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    const Text(
-                      'Route calculated by OSRM from OpenStreetMap data. Live traffic and RoadSense hazard scoring are not connected. Follow local road signs.',
-                      style: TextStyle(
+                    ],
+                    const SizedBox(height: 12),
+                    if (!_isNavigating)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _startNavigation,
+                          icon: const Icon(Icons.navigation),
+                          label: const Text('Start Navigation'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF087F75),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(0, 48),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                        ),
+                      )
+                    else ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _recenter,
+                              icon: const Icon(Icons.my_location),
+                              label: const Text('Recenter'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: _stopNavigation,
+                              icon: const Icon(Icons.stop),
+                              label: const Text('Stop navigation'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFD32F2F),
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_trackingController?.statusMessage != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            _trackingController!.statusMessage!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF087F75),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(
+                      _hazardSource.isSampleData
+                          ? 'Route calculated by OSRM. RoadSense hazard scoring active with sample data. Follow local road signs.'
+                          : (_routeRisks.values.any((r) => r.hasHazards)
+                                ? 'Route calculated by OSRM. RoadSense hazard scoring active. Follow local road signs.'
+                                : 'Route calculated by OSRM. No known hazards reported on this route. Follow local road signs.'),
+                      style: const TextStyle(
                         fontSize: 11,
                         color: RoadSenseColors.muted,
                       ),

@@ -1,4 +1,9 @@
+// ignore_for_file: prefer_initializing_formals
+import 'domain/route_risk.dart';
 import 'explore.dart';
+import 'map/hazard_adapter.dart';
+
+export 'map/hazard_adapter.dart';
 
 class RoutePlan {
   const RoutePlan({
@@ -21,15 +26,22 @@ class RouteHazardWarning {
     required this.hazard,
     required this.currentRoute,
     this.alternativeRoute,
+    this.distanceAlongRouteMeters,
   });
 
   final Hazard hazard;
   final RoutePlan currentRoute;
   final RoutePlan? alternativeRoute;
+  final double? distanceAlongRouteMeters;
 
   String get title => 'Road hazard ahead';
-  String get detail =>
-      'High-severity ${hazardTypeLabel(hazard.type)} · ${hazard.distanceLabel.isEmpty ? 'ahead' : hazard.distanceLabel}';
+  String get detail {
+    final distanceStr = distanceAlongRouteMeters != null
+        ? '${distanceAlongRouteMeters!.round()} m ahead'
+        : (hazard.distanceLabel.isEmpty ? 'ahead' : hazard.distanceLabel);
+    return 'High-severity ${hazardTypeLabel(hazard.type)} · $distanceStr';
+  }
+
   String get alternativeLabel => alternativeRoute == null
       ? 'No alternative route available'
       : 'Alternative route +${alternativeRoute!.durationMinutes - currentRoute.durationMinutes} min';
@@ -62,34 +74,43 @@ class MockRoutingService implements RoutingService {
       );
 }
 
+/// Service that evaluates road hazards against active routes to generate warnings
+/// and recommend safer alternative routes.
 class HazardAwareRoutingService {
-  // Keep the public named parameter while storing the dependency privately.
   const HazardAwareRoutingService({
     required RoutingService routingService,
     this.minimumConfidence = .8,
-  })
-    // ignore: prefer_initializing_formals
-    : _routingService = routingService;
+    this.eligibilityFilter,
+  }) : _routingService = routingService;
 
   final RoutingService _routingService;
   final double minimumConfidence;
+  final HazardEligibilityFilter? eligibilityFilter;
 
   Future<RouteHazardWarning?> checkRoute({
     required List<Hazard> hazards,
   }) async {
     final route = await _routingService.currentRoute();
-    final hazard = hazards
+
+    // Find eligible high-severity hazards matching the route
+    final matchedHazard = hazards
         .where(
           (item) =>
               route.segmentIds.contains(item.segmentId) &&
               item.status == VerificationStatus.verified &&
               item.severity == HazardSeverity.high &&
-              item.confidence >= minimumConfidence,
+              item.confidence >= minimumConfidence &&
+              (eligibilityFilter == null ||
+                  eligibilityFilter!.isEligible(
+                    hazardToRouteHazardPoint(item),
+                  )),
         )
         .firstOrNull;
-    if (hazard == null) return null;
+
+    if (matchedHazard == null) return null;
+
     return RouteHazardWarning(
-      hazard: hazard,
+      hazard: matchedHazard,
       currentRoute: route,
       alternativeRoute: await _routingService.alternativeRoute(route),
     );
@@ -98,10 +119,3 @@ class HazardAwareRoutingService {
   Future<RoutePlan> reroute(RouteHazardWarning warning) async =>
       warning.alternativeRoute ?? warning.currentRoute;
 }
-
-String hazardTypeLabel(HazardType type) => switch (type) {
-  HazardType.pothole => 'pothole',
-  HazardType.roughSurface => 'rough road',
-  HazardType.debris => 'debris',
-  HazardType.unknown => 'road hazard',
-};

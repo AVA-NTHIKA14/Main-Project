@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'auth.dart';
@@ -34,9 +35,20 @@ Future<FirebaseApp?> initializeFirebase({FirebaseOptions? options}) async {
   }
 }
 
+const FirebaseOptions roadSenseWebFirebaseOptions = FirebaseOptions(
+  apiKey: 'AIzaSyBX8Rf1Cs3KLQUADtEcOPagkiyotafZXeY',
+  appId: '1:1078799114478:android:5a8fb776c00259447a13ff',
+  messagingSenderId: '1078799114478',
+  projectId: 'roadsense-cc1f5',
+  authDomain: 'roadsense-cc1f5.firebaseapp.com',
+  storageBucket: 'roadsense-cc1f5.firebasestorage.app',
+);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final app = await initializeFirebase();
+  final app = await initializeFirebase(
+    options: kIsWeb ? roadSenseWebFirebaseOptions : null,
+  );
   runApp(
     RoadSenseApp(
       authenticationService: app != null
